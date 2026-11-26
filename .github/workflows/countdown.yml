@@ -1,0 +1,45 @@
+name: Discord New Year Countdown
+
+on:
+  schedule:
+    # Runs every 15 minutes on Dec 31 and Jan 1 (UTC)
+    - cron: '*/15 * 31 12 *'
+    - cron: '*/15 * 1 1 *'
+  workflow_dispatch: # Allows manual testing
+
+jobs:
+  post-message:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check schedule and post to Discord
+        env:
+          WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          python3 -c '
+          import csv, os, urllib.request, json
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          now = datetime.now(ZoneInfo("Europe/Amsterdam"))
+          current_date = now.strftime("%Y-%m-%d")
+          # Round down to nearest 15-minute mark to absorb GitHub cron delays
+          minute_block = (now.minute // 15) * 15
+          target_time = f"{now.hour:02d}:{minute_block:02d}:00"
+
+          with open("schedule.csv", mode="r", encoding="utf-8-sig") as f:
+              reader = csv.DictReader(f)
+              for row in reader:
+                  if row.get("Datum (NL)") == current_date and row.get("Tijd (NL)") == target_time:
+                      payload = json.dumps({
+                          "content": row["Bericht (kopiëren naar Discord)"],
+                          "allowed_mentions": {"parse": ["everyone"]}
+                      }).encode("utf-8")
+                      req = urllib.request.Request(
+                          os.environ["WEBHOOK_URL"],
+                          data=payload,
+                          headers={"Content-Type": "application/json", "User-Agent": "DiscordWebhook/1.0"}
+                      )
+                      urllib.request.urlopen(req)
+                      print(f"Sent message #{row[\"Nr\"]}")
+          '
