@@ -14,7 +14,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check schedule and post to Discord
         env:
-          WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}
+          WEBHOOK_URL_1: ${{ secrets.DISCORD_WEBHOOK }}
+          WEBHOOK_URL_2: ${{ secrets.DISCORD_WEBHOOK_2 }}
         run: |
           python3 - << 'EOF'
           import csv, os, urllib.request, json
@@ -26,6 +27,11 @@ jobs:
           minute_block = (now.minute // 15) * 15
           target_time = f"{now.hour:02d}:{minute_block:02d}"
           print(f"Checking for {current_date} {target_time} CET...")
+
+          webhooks = [
+              url for url in [os.environ.get("WEBHOOK_URL_1"), os.environ.get("WEBHOOK_URL_2")]
+              if url and url.strip()
+          ]
 
           with open("schedule.csv", mode="r", encoding="utf-8-sig") as f:
               sample = f.read(2048)
@@ -40,12 +46,13 @@ jobs:
                           "content": row["Bericht (kopiëren naar Discord)"],
                           "allowed_mentions": {"parse": ["everyone"]}
                       }).encode("utf-8")
-                      req = urllib.request.Request(
-                          os.environ["WEBHOOK_URL"],
-                          data=payload,
-                          headers={"Content-Type": "application/json", "User-Agent": "DiscordWebhook/1.0"}
-                      )
-                      urllib.request.urlopen(req)
-                      nr = row.get("Nr", "?")
-                      print(f"Sent message #{nr}")
+                      for i, url in enumerate(webhooks, start=1):
+                          req = urllib.request.Request(
+                              url.strip(),
+                              data=payload,
+                              headers={"Content-Type": "application/json", "User-Agent": "DiscordWebhook/1.0"}
+                          )
+                          urllib.request.urlopen(req)
+                          nr = row.get("Nr", "?")
+                          print(f"Sent message #{nr} to webhook #{i}")
           EOF
