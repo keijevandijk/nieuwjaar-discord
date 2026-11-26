@@ -7,52 +7,91 @@ on:
     - cron: '*/15 * 1 1 *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   post-message:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Check schedule and post to Discord
         env:
           WEBHOOK_URL_1: ${{ secrets.DISCORD_WEBHOOK }}
           WEBHOOK_URL_2: ${{ secrets.DISCORD_WEBHOOK_2 }}
         run: |
           python3 - << 'EOF'
-          import csv, os, urllib.request, json
+          import csv, os, urllib.request, json, time
           from datetime import datetime
           from zoneinfo import ZoneInfo
 
-          now = datetime.now(ZoneInfo("Europe/Amsterdam"))
-          current_date = now.strftime("%d-%m-%Y")
-          minute_block = (now.minute // 15) * 15
-          target_time = f"{now.hour:02d}:{minute_block:02d}"
-          print(f"Checking for {current_date} {target_time} CET...")
+          tz = ZoneInfo("Europe/Amsterdam")
+          now = datetime.now(tz)
+          print(f"Current NL time: {now.strftime('%d-%m-%Y %H:%M:%S')}")
+
+          # Lees welke berichten al zijn verstuurd
+          sent_file = "sent.txt"
+          sent_ids = set()
+          if os.path.exists(sent_file):
+              with open(sent_file, "r", encoding="utf-8") as sf:
+                  sent_ids = {line.strip() for line in sf if line.strip()}
 
           webhooks = [
-              url for url in [os.environ.get("WEBHOOK_URL_1"), os.environ.get("WEBHOOK_URL_2")]
+              url.strip() for url in [os.environ.get("WEBHOOK_URL_1"), os.environ.get("WEBHOOK_URL_2")]
               if url and url.strip()
           ]
+
+          newly_sent = []
 
           with open("schedule.csv", mode="r", encoding="utf-8-sig") as f:
               sample = f.read(2048)
               f.seek(0)
               delimiter = ";" if sample.count(";") > sample.count(",") else ","
               reader = csv.DictReader(f, delimiter=delimiter)
+
               for row in reader:
+                  nr = (row.get("Nr") or "").strip()
                   row_date = (row.get("Datum (NL)") or "").strip()
                   row_time = (row.get("Tijd (NL)") or "").strip()
-                  if row_date == current_date and row_time == target_time:
+
+                  if not nr or not row_date or not row_time or nr in sent_ids:
+                      continue
+
+                  # Zet datum + tijd uit CSV om naar datetime-object in NL tijdzone
+                  scheduled_dt = datetime.strptime(f"{row_date} {row_time}", "%d-%m-%Y %H:%M").replace(tzinfo=tz)
+
+                  # Verstuur als het geplande tijdstip is bereikt (of gepasseerd)
+                  if scheduled_dt <= now:
                       payload = json.dumps({
                           "content": row["Bericht (kopiëren naar Discord)"],
                           "allowed_mentions": {"parse": ["everyone"]}
                       }).encode("utf-8")
+
                       for i, url in enumerate(webhooks, start=1):
                           req = urllib.request.Request(
-                              url.strip(),
+                              url,
                               data=payload,
                               headers={"Content-Type": "application/json", "User-Agent": "DiscordWebhook/1.0"}
                           )
                           urllib.request.urlopen(req)
-                          nr = row.get("Nr", "?")
-                          print(f"Sent message #{nr} to webhook #{i}")
+                          print(f"Sent message #{nr} ({row_date} {row_time}) to webhook #{i}")
+                          time.sleep(1)  # Voorkomt Discord rate-limits bij inhalen
+
+                      newly_sent.append(nr)
+
+          if newly_sent:
+              with open(sent_file, "a", encoding="utf-8") as sf:
+                  for nr in newly_sent:
+                      sf.write(f"{nr}\n")
           EOF
+
+      - name: Save sent log
+        run: |
+          if [ -n "$(git status --porcelain sent.txt)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@://github.com"
+            git add sent.txt
+            git commit -m "Log verzonden nieuwjaarsberichten"
+            git push
+          fi
