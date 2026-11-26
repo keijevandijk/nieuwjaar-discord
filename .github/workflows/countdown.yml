@@ -22,9 +22,9 @@ jobs:
           from zoneinfo import ZoneInfo
 
           now = datetime.now(ZoneInfo("Europe/Amsterdam"))
-          current_date = now.strftime("%Y-%m-%d")
+          current_date = now.strftime("%d-%m-%Y")
           minute_block = (now.minute // 15) * 15
-          target_time = f"{now.hour:02d}:{minute_block:02d}:00"
+          target_time = f"{now.hour:02d}:{minute_block:02d}"
           print(f"Checking for {current_date} {target_time} CET...")
 
           with open("schedule.csv", mode="r", encoding="utf-8-sig") as f:
@@ -33,7 +33,9 @@ jobs:
               delimiter = ";" if sample.count(";") > sample.count(",") else ","
               reader = csv.DictReader(f, delimiter=delimiter)
               for row in reader:
-                  if row.get("Datum (NL)") == current_date and row.get("Tijd (NL)") == target_time:
+                  row_date = (row.get("Datum (NL)") or "").strip()
+                  row_time = (row.get("Tijd (NL)") or "").strip()
+                  if row_date == current_date and row_time == target_time:
                       payload = json.dumps({
                           "content": row["Bericht (kopiëren naar Discord)"],
                           "allowed_mentions": {"parse": ["everyone"]}
